@@ -57,6 +57,13 @@ fn terminal_graphics_attach_and_observe_upload_repaint_and_remove_images() {
                 .test_process_pty_bytes(IMAGE);
             server.render_and_stream();
             let first = frame_bytes(&frames);
+            let mut host = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+            host.enable_kitty_graphics().unwrap();
+            host.resize(80, 24, 16, 16).unwrap();
+            host.write(first.as_bytes());
+            let images = host.kitty_image_placements().unwrap();
+            assert_eq!(images.len(), 1);
+            assert_eq!(images[0].data, [255, 0, 0, 255]);
             assert!(first.contains("a=t"));
             assert!(first.contains("a=p"));
             assert!(first.contains("/wAA/w=="));
@@ -67,6 +74,8 @@ fn terminal_graphics_attach_and_observe_upload_repaint_and_remove_images() {
             let repaint = frame_bytes(&frames);
             assert!(!repaint.contains("a=t"));
             assert!(repaint.contains("a=p"));
+            host.write(repaint.as_bytes());
+            assert_eq!(host.kitty_image_placements().unwrap().len(), 1);
 
             server
                 .app
@@ -79,6 +88,8 @@ fn terminal_graphics_attach_and_observe_upload_repaint_and_remove_images() {
             let deleted = frame_bytes(&frames);
             assert!(deleted.contains("a=d"));
             assert!(!deleted.contains("a=p"));
+            host.write(deleted.as_bytes());
+            assert!(host.kitty_image_placements().unwrap().is_empty());
         });
     }
 }
