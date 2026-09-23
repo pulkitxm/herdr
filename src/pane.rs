@@ -432,6 +432,15 @@ fn clear_osc_evidence_for_agent_transition(terminal: &PaneTerminal, previous_age
     }
 }
 
+fn clear_mouse_reporting_for_agent_exit(
+    terminal: &PaneTerminal,
+    action: ForegroundShellAgentAction,
+) {
+    if action == ForegroundShellAgentAction::ReportProcessExit {
+        terminal.clear_mouse_reporting();
+    }
+}
+
 fn apply_foreground_shell_agent_action(
     agent_presence: &mut AgentDetectionPresence,
     action: ForegroundShellAgentAction,
@@ -863,6 +872,7 @@ fn spawn_basic_detection_task(
                     foreground_is_pane_shell,
                     foreground_shell_exit_reported,
                 );
+                clear_mouse_reporting_for_agent_exit(&terminal, foreground_action);
                 let changed = apply_foreground_shell_agent_action(
                     &mut agent_presence,
                     foreground_action,
@@ -2797,6 +2807,7 @@ impl PaneRuntime {
                                 foreground_is_pane_shell,
                                 foreground_shell_exit_reported,
                             );
+                            clear_mouse_reporting_for_agent_exit(&terminal, foreground_action);
                             let changed = apply_foreground_shell_agent_action(
                                 &mut agent_presence,
                                 foreground_action,
@@ -4976,6 +4987,27 @@ mod tests {
             foreground_shell_agent_action(Some(Agent::Codex), None, true, true),
             ForegroundShellAgentAction::ClearAgent
         );
+    }
+
+    #[tokio::test]
+    async fn agent_process_exit_clears_mouse_reporting_without_erasing_shell_output() {
+        let runtime =
+            PaneRuntime::test_with_screen_bytes(80, 24, b"shell prompt\x1b[?1003h\x1b[?1006h");
+        assert!(runtime.mouse_reporting_enabled());
+
+        clear_mouse_reporting_for_agent_exit(
+            &runtime.terminal,
+            ForegroundShellAgentAction::ObserveProbe,
+        );
+        assert!(runtime.mouse_reporting_enabled());
+
+        clear_mouse_reporting_for_agent_exit(
+            &runtime.terminal,
+            ForegroundShellAgentAction::ReportProcessExit,
+        );
+
+        assert!(!runtime.mouse_reporting_enabled());
+        assert!(runtime.detection_text().contains("shell prompt"));
     }
 
     #[test]

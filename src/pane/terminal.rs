@@ -445,6 +445,10 @@ impl PaneTerminal {
         self.ghostty.mouse_reporting_enabled()
     }
 
+    pub fn clear_mouse_reporting(&self) {
+        self.ghostty.clear_mouse_reporting();
+    }
+
     pub fn modify_other_keys_level(&self) -> u8 {
         self.ghostty.modify_other_keys_level()
     }
@@ -1841,6 +1845,20 @@ impl GhosttyPaneTerminal {
         self.core
             .lock()
             .is_ok_and(|core| core.terminal.mouse_tracking_enabled().unwrap_or(false))
+    }
+
+    pub fn clear_mouse_reporting(&self) {
+        let Ok(mut core) = self.core.lock() else {
+            return;
+        };
+        for mode in [
+            MODE_MOUSE_X10,
+            MODE_MOUSE_PRESS_RELEASE,
+            MODE_MOUSE_BUTTON_MOTION,
+            MODE_MOUSE_ANY_MOTION,
+        ] {
+            let _ = core.terminal.mode_set(mode, false);
+        }
     }
 
     pub fn modify_other_keys_level(&self) -> u8 {
