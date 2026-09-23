@@ -124,7 +124,7 @@ Attach by terminal ID:
 herdr terminal attach term_abc123
 ```
 
-Direct attach streams the current rendered terminal state, then live ANSI frames. Input goes straight to that terminal.
+Direct attach streams the current rendered terminal state, then live ANSI frames. Input goes straight to that terminal. Kitty images are included when graphics are enabled and the outer terminal reports its cell dimensions.
 
 Detach with `ctrl+b q`. Send a literal `ctrl+b` with `ctrl+b ctrl+b`.
 
@@ -157,3 +157,11 @@ newline-delimited JSON commands on stdin. `terminal.input` sends text or
 base64 bytes, `terminal.resize` changes the controller viewport,
 `terminal.scroll` scrolls the attached viewport, and `terminal.release` closes
 the controller. Only one controller owns input and resize at a time.
+
+Controllers must send their pixel cell dimensions in an initial resize command to receive Kitty images without waiting for a window resize:
+
+```json
+{"type":"terminal.resize","cols":120,"rows":40,"cell_width_px":8,"cell_height_px":16}
+```
+
+Image uploads and placements are embedded in the ANSI bytes of `terminal.frame` records. Preserve those bytes when forwarding frames to a Kitty graphics compatible terminal.

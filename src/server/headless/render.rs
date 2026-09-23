@@ -656,6 +656,9 @@ impl HeadlessServer {
                 }
             }
             let mut surface_parts = None;
+            let mut next_terminal_graphics = None;
+            let mut terminal_graphics_pending = false;
+            let mut terminal_has_graphics = false;
             let frame = match mode {
                 ClientConnectionMode::ClientShell => {
                     let crate::server::client_shell::RenderedPaneSurface {
@@ -704,6 +707,16 @@ impl HeadlessServer {
                         "full_render.visible_hyperlinks",
                         hyperlinks_started,
                     );
+                    let Some(client) = self.clients.get(&client_id) else {
+                        continue;
+                    };
+                    let (graphics_state, graphics) =
+                        client
+                            .terminal_graphics
+                            .prepare(&terminal_id, runtime, area, cell_size);
+                    terminal_graphics_pending = graphics.incomplete;
+                    terminal_has_graphics = !graphics.bytes.is_empty();
+                    next_terminal_graphics = Some(graphics_state);
                     let (synchronized, after_epoch) = runtime.synchronized_output_state();
                     if synchronized || after_epoch != epoch {
                         if let Some(client) = self.clients.get_mut(&client_id) {
@@ -715,11 +728,12 @@ impl HeadlessServer {
                         continue;
                     }
                     let frame_started = crate::render_prof::timer();
-                    let frame = FrameData::from_ratatui_buffer_with_hyperlinks(
+                    let mut frame = FrameData::from_ratatui_buffer_with_hyperlinks(
                         &buffer,
                         cursor,
                         &hyperlinks,
                     );
+                    frame.graphics = graphics.bytes;
                     crate::render_prof::duration_since("full_render.frame_build", frame_started);
                     frame
                 }
@@ -732,13 +746,14 @@ impl HeadlessServer {
                 crate::render_prof::event("full_render.writer_missing");
                 continue;
             };
-            let has_graphics = surface_parts
-                .as_ref()
-                .is_some_and(|(_, _, _, graphics, _)| {
-                    !graphics.assets.is_empty()
-                        || !graphics.placements.is_empty()
-                        || !graphics.retained_assets.is_empty()
-                });
+            let has_graphics = terminal_has_graphics
+                || surface_parts
+                    .as_ref()
+                    .is_some_and(|(_, _, _, graphics, _)| {
+                        !graphics.assets.is_empty()
+                            || !graphics.placements.is_empty()
+                            || !graphics.retained_assets.is_empty()
+                    });
             let mut next_shell_graphics_delivery = None;
             let prepared = if let Some((panes, splits, popup, graphics, delivery)) = surface_parts {
                 next_shell_graphics_delivery = Some(delivery);
@@ -770,7 +785,9 @@ impl HeadlessServer {
             let mut shell_assets_deferred = false;
             let serialized = match Self::frame_server_message_with_max(prepared.message(), max) {
                 Ok(frame) => frame,
-                Err(protocol::FramingError::Oversized { claimed, max }) if has_graphics => {
+                Err(protocol::FramingError::Oversized { claimed, max })
+                    if next_shell_graphics_delivery.is_some() =>
+                {
                     warn!(
                         client_id,
                         claimed, max, "dropping graphics assets from oversized pane surface"
@@ -811,11 +828,15 @@ impl HeadlessServer {
                 .is_some_and(crate::kitty_graphics::surface::DeliveryCache::has_pending);
             match writer.render.try_send(serialized) {
                 Ok(()) => {
+                    if let Some(graphics) = next_terminal_graphics {
+                        client.terminal_graphics = graphics;
+                    }
                     if let Some(delivery) = next_shell_graphics_delivery {
                         client.shell_graphics_delivery = delivery;
                     }
                     client.render_state.commit_sent_frame(prepared);
-                    if shell_graphics_pending || shell_assets_deferred {
+                    if terminal_graphics_pending || shell_graphics_pending || shell_assets_deferred
+                    {
                         client.defer_full_render();
                     } else {
                         client.clear_deferred_render();
