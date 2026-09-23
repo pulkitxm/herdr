@@ -16,6 +16,7 @@ use crate::layout::{PaneId, PaneInfo};
 use crate::terminal::TerminalRuntimeRegistry;
 
 pub(crate) mod surface;
+pub(crate) mod terminal;
 
 const KITTY_CHUNK_BYTES: usize = 3072;
 const MAX_OVERSIZED_SOURCES: usize = 256;

@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "terminal_graphics.rs"]
+mod terminal_graphics_tests;
+
 #[path = "pane_graphics.rs"]
 mod pane_graphics_tests;
 #[path = "pane_move.rs"]
