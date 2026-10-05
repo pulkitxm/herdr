@@ -128,6 +128,8 @@ herdr terminal attach term_abc123
 
 Direct attach streams the current rendered terminal state, then live ANSI frames. Input goes straight to that terminal.
 
+Direct attachments also replay the terminal's Kitty images when `terminal.kitty_graphics` is enabled and the host terminal supports Kitty graphics. Images follow each client's pixel geometry and are sent inline, including over SSH. Reattaching restores existing images. Attaching to different terminals does not change shared pane focus or zoom.
+
 Detach with `ctrl+b q`. Send a literal `ctrl+b` with `ctrl+b ctrl+b`.
 
 Only one writable direct attach client owns input and resize for a terminal. Use `--takeover` to replace an existing owner:
