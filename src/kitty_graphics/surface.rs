@@ -699,9 +699,9 @@ pub(crate) fn collect_terminal_scene(
     area: Rect,
     cell_size: HostCellSize,
     delivered: &DeliveryCache,
-) -> (SurfaceGraphicsScene, DeliveryCache) {
+) -> (SurfaceGraphicsScene, DeliveryCache, SourceFiles) {
     if !cell_size.is_known() {
-        return (SurfaceGraphicsScene::default(), DeliveryCache::default());
+        return Default::default();
     }
     let viewport = PaneId::from_raw(0);
     let target = SurfaceGraphicsTarget::Pane {
@@ -714,6 +714,9 @@ pub(crate) fn collect_terminal_scene(
         .scroll_metrics()
         .map_or(0, |m| m.offset_from_bottom as u32);
     let placements = runtime.kitty_image_placements_with_data_filter(|descriptor| {
+        if descriptor.source_file {
+            return false;
+        }
         let key = asset_key_from_descriptor(
             SurfaceGraphicsSource::Terminal {
                 target: target.clone(),
@@ -737,24 +740,21 @@ pub(crate) fn collect_terminal_scene(
     });
     let host_placements = placements
         .into_iter()
-        .map(|mut placement| {
-            placement.source_file = None;
-            HostPlacement {
-                raw_data: None,
+        .map(|placement| HostPlacement {
+            raw_data: None,
+            pane_id: viewport,
+            host_image_id: None,
+            area,
+            cell_size,
+            source_key: HostSourceKey::Terminal {
                 pane_id: viewport,
-                host_image_id: None,
-                area,
-                cell_size,
-                source_key: HostSourceKey::Terminal {
-                    pane_id: viewport,
-                    image_id: placement.image_id,
-                },
-                placement,
-                scrollback_offset,
-            }
+                image_id: placement.image_id,
+            },
+            placement,
+            scrollback_offset,
         })
         .collect();
-    let (mut scene, mut next, _) = collect_host_scene(
+    let (mut scene, mut next, sources) = collect_host_scene(
         host_placements,
         &HashMap::from([(viewport, target)]),
         delivered,
@@ -789,7 +789,7 @@ pub(crate) fn collect_terminal_scene(
     }
     scene.retained_assets = next.offscreen.clone();
     next.pending |= pending;
-    (scene, next)
+    (scene, next, sources)
 }
 
 fn collect_host_scene(

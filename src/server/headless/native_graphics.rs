@@ -311,7 +311,7 @@ impl HeadlessServer {
         true
     }
 
-    fn materialize_native_sources(
+    pub(super) fn materialize_native_sources(
         &mut self,
         client: u64,
         scene: &mut SurfaceGraphicsScene,

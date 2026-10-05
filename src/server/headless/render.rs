@@ -751,7 +751,13 @@ impl HeadlessServer {
                         &hyperlinks,
                     );
                     {
-                        let (scene, delivery) = terminal_scene;
+                        let (mut scene, mut delivery, mut sources) = terminal_scene;
+                        self.materialize_native_sources(
+                            client_id,
+                            &mut scene,
+                            &mut delivery,
+                            &mut sources,
+                        );
                         if let Some(client) = self.clients.get(&client_id) {
                             let mut graphics = client.terminal_graphics.clone();
                             if graphics.scope().is_empty() {
