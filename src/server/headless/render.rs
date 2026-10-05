@@ -665,6 +665,8 @@ impl HeadlessServer {
                 }
             }
             let mut surface_parts = None;
+            let mut next_terminal_graphics = None;
+            let mut terminal_graphics_delivery = None;
             let frame = match mode {
                 ClientConnectionMode::ClientShell => {
                     let crate::server::client_shell::RenderedPaneSurface {
@@ -721,6 +723,17 @@ impl HeadlessServer {
                         "full_render.visible_hyperlinks",
                         hyperlinks_started,
                     );
+                    let terminal_scene = if self.app.state.kitty_graphics_enabled {
+                        crate::kitty_graphics::surface::collect_terminal_scene(
+                            runtime,
+                            &terminal_id,
+                            area,
+                            cell_size,
+                            &shell_graphics_delivery,
+                        )
+                    } else {
+                        Default::default()
+                    };
                     let (synchronized, after_epoch) = runtime.synchronized_output_state();
                     if synchronized || after_epoch != epoch {
                         if let Some(client) = self.clients.get_mut(&client_id) {
@@ -732,11 +745,35 @@ impl HeadlessServer {
                         continue;
                     }
                     let frame_started = crate::render_prof::timer();
-                    let frame = FrameData::from_ratatui_buffer_with_hyperlinks(
+                    let mut frame = FrameData::from_ratatui_buffer_with_hyperlinks(
                         &buffer,
                         cursor,
                         &hyperlinks,
                     );
+                    {
+                        let (scene, delivery) = terminal_scene;
+                        if let Some(client) = self.clients.get(&client_id) {
+                            let mut graphics = client.terminal_graphics.clone();
+                            if graphics.scope().is_empty() {
+                                graphics.set_scope(&format!(
+                                    "{}:{client_id}",
+                                    self.client_shell_boot_id
+                                ));
+                            }
+                            graphics.set_scene(scene);
+                            frame.graphics = graphics
+                                .encode_output(
+                                    crate::kitty_graphics::surface::Visibility::Main,
+                                    (0, 0),
+                                    None,
+                                    cell_size,
+                                    &crate::kitty_graphics::surface::Occlusion::default(),
+                                )
+                                .into_inline_bytes();
+                            next_terminal_graphics = Some(graphics);
+                            terminal_graphics_delivery = Some(delivery);
+                        }
+                    }
                     crate::render_prof::duration_since("full_render.frame_build", frame_started);
                     frame
                 }
@@ -763,14 +800,15 @@ impl HeadlessServer {
                 crate::render_prof::event("full_render.writer_missing");
                 continue;
             };
-            let has_graphics = surface_parts
-                .as_ref()
-                .is_some_and(|(_, _, _, graphics, _, _)| {
-                    !graphics.assets.is_empty()
-                        || !graphics.placements.is_empty()
-                        || !graphics.retained_assets.is_empty()
-                });
-            let mut next_shell_graphics_delivery = None;
+            let has_graphics = !frame.graphics.is_empty()
+                || surface_parts
+                    .as_ref()
+                    .is_some_and(|(_, _, _, graphics, _, _)| {
+                        !graphics.assets.is_empty()
+                            || !graphics.placements.is_empty()
+                            || !graphics.retained_assets.is_empty()
+                    });
+            let mut next_shell_graphics_delivery = terminal_graphics_delivery;
             let prepared =
                 if let Some((panes, splits, popup, graphics, delivery, _)) = surface_parts {
                     next_shell_graphics_delivery = Some(delivery);
@@ -897,6 +935,9 @@ impl HeadlessServer {
             };
             match send {
                 Ok(()) => {
+                    if let Some(graphics) = next_terminal_graphics {
+                        client.terminal_graphics = graphics;
+                    }
                     if let Some((graphics, inline_assets)) = prepared.queued_surface_graphics() {
                         self.native_graphics
                             .commit_scene(client_id, graphics, inline_assets);

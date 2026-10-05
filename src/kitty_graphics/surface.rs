@@ -684,6 +684,119 @@ pub(crate) fn collect_scene(
         }
     }
 
+    let (mut scene, mut next, sources) = collect_host_scene(host_placements, &targets, delivered);
+    let desired = scene.placements.iter().map(|p| p.asset.clone()).collect();
+    let offscreen = offscreen_assets(app, workspace_index, &public_panes, delivered, &desired);
+    next.assets.extend(offscreen.iter().cloned());
+    next.offscreen = offscreen.clone();
+    scene.retained_assets = offscreen;
+    (scene, next, sources)
+}
+
+pub(crate) fn collect_terminal_scene(
+    runtime: &crate::terminal::TerminalRuntime,
+    terminal_id: &str,
+    area: Rect,
+    cell_size: HostCellSize,
+    delivered: &DeliveryCache,
+) -> (SurfaceGraphicsScene, DeliveryCache) {
+    if !cell_size.is_known() {
+        return (SurfaceGraphicsScene::default(), DeliveryCache::default());
+    }
+    let viewport = PaneId::from_raw(0);
+    let target = SurfaceGraphicsTarget::Pane {
+        pane_id: terminal_id.to_owned(),
+    };
+    let mut requested = HashSet::new();
+    let mut budget = super::HEADLESS_GRAPHICS_TRANSACTION_BUDGET;
+    let mut pending = false;
+    let scrollback_offset = runtime
+        .scroll_metrics()
+        .map_or(0, |m| m.offset_from_bottom as u32);
+    let placements = runtime.kitty_image_placements_with_data_filter(|descriptor| {
+        let key = asset_key_from_descriptor(
+            SurfaceGraphicsSource::Terminal {
+                target: target.clone(),
+                image_id: descriptor.image_id,
+            },
+            descriptor,
+        );
+        if delivered.assets.contains(&key) || !requested.insert(key) {
+            return false;
+        }
+        let size = super::image_transfer_estimated_size(descriptor.data_len);
+        if size > super::HEADLESS_GRAPHICS_TRANSACTION_BUDGET {
+            return false;
+        }
+        if size > budget {
+            pending = true;
+            return false;
+        }
+        budget -= size;
+        true
+    });
+    let host_placements = placements
+        .into_iter()
+        .map(|mut placement| {
+            placement.source_file = None;
+            HostPlacement {
+                raw_data: None,
+                pane_id: viewport,
+                host_image_id: None,
+                area,
+                cell_size,
+                source_key: HostSourceKey::Terminal {
+                    pane_id: viewport,
+                    image_id: placement.image_id,
+                },
+                placement,
+                scrollback_offset,
+            }
+        })
+        .collect();
+    let (mut scene, mut next, _) = collect_host_scene(
+        host_placements,
+        &HashMap::from([(viewport, target)]),
+        delivered,
+    );
+    let visible = scene
+        .placements
+        .iter()
+        .map(|p| &p.asset)
+        .collect::<HashSet<_>>();
+    let candidates = delivered
+        .assets
+        .iter()
+        .filter(|key| !visible.contains(key))
+        .filter_map(|key| match &key.source {
+            SurfaceGraphicsSource::Terminal { image_id, .. } => Some((key, *image_id)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let fingerprints =
+        runtime.kitty_image_fingerprints(&candidates.iter().map(|(_, id)| *id).collect::<Vec<_>>());
+    let mut bytes = 0;
+    for ((key, _), fingerprint) in candidates.into_iter().zip(fingerprints) {
+        if fingerprint != Some(key.data_fingerprint)
+            || next.offscreen.len() == MAX_OFFSCREEN_IMAGES
+            || key.data_len > MAX_OFFSCREEN_IMAGE_BYTES - bytes
+        {
+            continue;
+        }
+        bytes += key.data_len;
+        next.assets.insert(key.clone());
+        next.offscreen.push(key.clone());
+    }
+    scene.retained_assets = next.offscreen.clone();
+    next.pending |= pending;
+    (scene, next)
+}
+
+fn collect_host_scene(
+    host_placements: Vec<HostPlacement>,
+    targets: &HashMap<PaneId, SurfaceGraphicsTarget>,
+    delivered: &DeliveryCache,
+) -> (SurfaceGraphicsScene, DeliveryCache, SourceFiles) {
     let mut placements = Vec::new();
     let mut asset_data = HashMap::<SurfaceGraphicsAssetKey, Vec<u8>>::new();
     let mut sources = SourceFiles::default();
@@ -738,15 +851,9 @@ pub(crate) fn collect_scene(
         .iter()
         .map(|placement| placement.asset.clone())
         .collect::<HashSet<_>>();
-    let offscreen = offscreen_assets(app, workspace_index, &public_panes, delivered, &desired);
     let mut next = DeliveryCache {
-        assets: delivered
-            .assets
-            .intersection(&desired)
-            .chain(&offscreen)
-            .cloned()
-            .collect(),
-        offscreen: offscreen.clone(),
+        assets: delivered.assets.intersection(&desired).cloned().collect(),
+        offscreen: Vec::new(),
         pending: false,
     };
     let mut assets = Vec::new();
@@ -789,7 +896,7 @@ pub(crate) fn collect_scene(
         SurfaceGraphicsScene {
             assets,
             placements,
-            retained_assets: offscreen,
+            retained_assets: Vec::new(),
         },
         next,
         sources,

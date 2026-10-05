@@ -35,7 +35,6 @@ impl GraphicsOutput {
         self.operations.extend(other.operations);
     }
 
-    #[cfg(test)]
     pub(crate) fn into_inline_bytes(self) -> Vec<u8> {
         let mut bytes = Vec::new();
         for operation in self.operations {

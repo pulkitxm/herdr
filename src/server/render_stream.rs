@@ -113,7 +113,7 @@ impl ClientRenderState {
         }
     }
 
-    pub(crate) fn prepare_frame(&mut self, frame: FrameData) -> Option<PreparedRender> {
+    pub(crate) fn prepare_frame(&mut self, mut frame: FrameData) -> Option<PreparedRender> {
         match self {
             Self::Semantic { .. } => None,
             Self::TerminalAnsi {
@@ -121,7 +121,8 @@ impl ClientRenderState {
                 seq,
                 repaint_pending,
             } => {
-                if !*repaint_pending && blit_encoder.is_current(&frame) {
+                let graphics = std::mem::take(&mut frame.graphics);
+                if !*repaint_pending && graphics.is_empty() && blit_encoder.is_current(&frame) {
                     crate::render_prof::event("prepare_frame.ansi.skip_current");
                     return None;
                 }
@@ -133,11 +134,8 @@ impl ClientRenderState {
                 } else {
                     crate::render_prof::event("prepare_frame.ansi.partial");
                 }
-                insert_graphics_before_sync_end(&mut encoded.bytes, &frame.graphics);
-                crate::render_prof::counter(
-                    "prepare_frame.graphics.bytes",
-                    frame.graphics.len() as u64,
-                );
+                insert_graphics_before_sync_end(&mut encoded.bytes, &graphics);
+                crate::render_prof::counter("prepare_frame.graphics.bytes", graphics.len() as u64);
                 Some(PreparedRender::TerminalAnsi {
                     message: ServerMessage::Terminal(TerminalFrame {
                         seq: *seq + 1,
